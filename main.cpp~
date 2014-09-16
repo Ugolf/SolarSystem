@@ -1,0 +1,293 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <GL/glew.h>
+#include <GL/glut.h>
+#include "Targa.cpp"
+
+GLuint shaderVert, shaderFrag;	// Shadery
+GLuint shaderProg;	// Program
+
+
+//GLuint v,f,f2,p;
+GLfloat mat_specular[] = { 1.0, 1.0, 1.0, 1.0 };
+GLfloat mat_shininess[] = { 50.0 };
+GLfloat light_position[] = { 1.0, 1.0, 1.0, 0.0 };
+GLint loc;
+float a = 0;
+// obiekty tekstur
+GLuint textures[2];
+
+// Wczytanie kodu źróðłowego shadera z pliku
+char *loadTextFile(const char *fileName) {
+	// Otwarcie pliku:
+	FILE *plik = fopen(fileName, "rb");
+	if(!plik)	return(NULL);
+
+	// Zbadanie rozmiaru pliku:
+	unsigned long fSize;
+	fseek(plik, 0, SEEK_END);
+	fSize = ftell(plik);
+	fseek(plik, 0, SEEK_SET);
+
+	// Utworzenie bufora:
+	char *buff = (char*)malloc(fSize + 1);
+	if(!buff)	return(NULL);
+
+	// Odczyt danych:
+	fread(buff, 1, fSize, plik);
+	buff[fSize] = 0;	// Terminator
+
+	// Zamknięcie pliku:
+	fclose(plik);
+	return(buff);
+}
+
+// Sprawdzenie błędów
+void checkErrors(GLuint object) {
+	int res, logLen;
+	char *buff;
+
+	// Sprawdzenie SHADERA:
+	glGetShaderiv(object, GL_COMPILE_STATUS, &res);
+	if(res == GL_FALSE) {	// Sprawdzenie InfoLog
+		puts("GL_COMPILE_STATUS ERROR!");
+
+		// Pobranie długości loga:
+		glGetShaderiv(object, GL_INFO_LOG_LENGTH,&logLen);
+		// Przydzielenie pamięci na wiadomość:
+		buff = (char *)malloc(logLen);
+
+		glGetShaderInfoLog(object, logLen , NULL, buff);
+		puts(buff);
+
+		free(buff);
+		exit(0);
+	}
+
+	// Sprawdzenie PROGRAMU:
+	glGetProgramiv(object, GL_LINK_STATUS, &res);
+	if(res == GL_FALSE) {
+		puts("GL_LINK_STATUS ERROR!");
+
+		// Pobranie długości loga:
+		glGetProgramiv(object, GL_INFO_LOG_LENGTH,&logLen);
+		// Przydzielenie pamięci na wiadomość:
+		buff = (char *)malloc(logLen);
+
+		glGetProgramInfoLog(object, logLen, NULL, buff);
+		puts(buff);
+
+		free(buff);
+		exit(0);
+	}
+}
+
+// Konfiguracja shaderów
+void setupShaders(char *fileVert, char *fileFrag) {
+	char *strVert, *strFrag;
+
+	// Utworzenie shaderów:
+	shaderVert = glCreateShader(GL_VERTEX_SHADER);
+	shaderFrag = glCreateShader(GL_FRAGMENT_SHADER);
+
+	// Odczyt kodu shaderów z pliku:
+	strVert = loadTextFile( fileVert );
+	if(!strVert) {
+		puts("** Błąd ładowania pliku *.vert");
+		exit(0);
+	}
+	strFrag = loadTextFile( fileFrag );
+	if(!strFrag) {
+		puts("** Błąd ładowania pliku *.frag");
+		exit(0);
+	}
+	// Wczytanie kodu źródłowego shadera:
+	glShaderSource(shaderVert, 1, (const GLchar**)(&strVert), NULL);
+	glShaderSource(shaderFrag, 1, (const GLchar**)(&strFrag), NULL);
+
+	// Zwolnienie pamięci
+	free(strVert);free(strFrag);
+
+	// Kompilacja shaderów:
+	glCompileShader(shaderVert);
+	glCompileShader(shaderFrag);
+
+	// Utworzenie programu:
+	shaderProg = glCreateProgram();
+
+	// Dołączenie shaderów do programu:
+	glAttachShader(shaderProg, shaderVert);
+	glAttachShader(shaderProg, shaderFrag);
+
+	// Linkowanie i aktywacja:
+	glLinkProgram(shaderProg);
+	glUseProgram(shaderProg);
+
+    // Sprawdzenie błędów:
+	checkErrors(shaderVert);
+	checkErrors(shaderFrag);
+
+	// Ustawienie tekstur dla shadera:
+	loc = glGetUniformLocation(shaderProg, "tex0");
+	glUniform1i(loc, 0);
+	loc = glGetUniformLocation(shaderProg, "tex1");
+	glUniform1i(loc, 1);
+}
+
+// Funkcja konfiguracji tekstur
+void setupTexture(){
+
+    // Wygenerowanie obiektów tekstur:
+   glGenTextures(2, textures);
+
+    // Wczytanie danych do 1 obiektu tekstury:
+    glBindTexture(GL_TEXTURE_2D, textures[0]);
+    if (!LoadTGATexture("tex0.tga"))
+    {
+        puts("blad podczas wczytywania tekstury");
+        exit(1);
+    }
+    // Wczytanie danych do 2 obiektu tekstury:
+    glBindTexture(GL_TEXTURE_2D, textures[1]);
+    if (!LoadTGATexture("tex1.tga"))
+    {
+        puts("blad podczas wczytywania tekstury");
+        exit(1);
+    }
+}
+
+// Funkcja konfiguracji sceny
+void setupScene(){
+     glEnable(GL_DEPTH_TEST);
+     glClearColor(1.0,1.0,1.0,1.0);
+
+    // Ustawienie właściwości materiału:
+   glMaterialfv(GL_FRONT, GL_SPECULAR, mat_specular);
+   glMaterialfv(GL_FRONT, GL_SHININESS, mat_shininess);
+   // Usatwienie parametrów oświetlenia:
+   glLightfv(GL_LIGHT0, GL_POSITION, light_position);
+
+   // Włączenie oświetlenia:
+   glEnable(GL_LIGHTING);
+   glEnable(GL_LIGHT0);
+
+	// Włączenie teksturowania dla dwóch jednostek:
+	glActiveTexture(GL_TEXTURE0); glEnable(GL_TEXTURE_2D);
+	glActiveTexture(GL_TEXTURE1); glEnable(GL_TEXTURE_2D);
+}
+
+// Funkcja renderująca scenę
+void display ()
+{
+    // Usunięcie zawartości buforów koloru i głębi:
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Ustawienie macierzy modelowania:
+    glMatrixMode(GL_MODELVIEW);
+    // Wczytanie macierzy jednostkowej:
+	glLoadIdentity();
+
+	// Ustawienie kamery:
+	gluLookAt(0.0,0.0,10.0,
+		      0.0,0.0,-1.0,
+			  0.0f,1.0f,0.0f);
+
+	// Zdefiniowanie obrotu o kąt a:
+	glRotatef(a,0,1,0);
+	//glVertexAttrib1f(loc,0.0);
+
+	// Ustawienie koloru obiektu:
+	glColor3f(1.0, 0.5,0.5);
+
+    // Ustawienie aktywnych tekstur i połączenie ich z obiektami tekstur:
+	glActiveTexture(GL_TEXTURE1);	glBindTexture(GL_TEXTURE_2D, textures[1]);
+	glActiveTexture(GL_TEXTURE0);	glBindTexture(GL_TEXTURE_2D, textures[0]);
+
+    // Narysowanie obiektu 3D:
+	glutSolidTeapot(2.5);
+
+	a+=0.1;
+
+    // Cykliczne wywołanie funkcji renderującej scenę:
+	glutPostRedisplay();
+
+    // Wywołanie zamiany buforów:
+	glutSwapBuffers();
+
+}
+
+// Funckja zmiany wielkości okna
+void reshape (int w,int h)
+{
+	float ratio = 1.0* w / h;
+
+	// Ustawienie macierzy rzutowania:
+	glMatrixMode(GL_PROJECTION);
+	// Wczytanie macierzy jednostkowej:
+	glLoadIdentity();
+
+	// Ustawienie widoku modelu dla całęgo okna:
+    glViewport(0, 0, w, h);
+
+	// Ustawienie poprawnej perspektywy
+	gluPerspective(45,ratio,1,1000);
+
+	display();
+}
+// Funkcja bosługująca klawiaturę
+void normalKeys(unsigned char key, int x, int y) {
+
+  // sprawdzenie, czy wciśnięto ESC
+	if (key == 27)
+		exit(0);
+}
+
+
+int main(int argc, char *argv[])
+{
+
+  // Inicjalizacja biblioteki GLUT:
+    glutInit (&argc,argv);
+
+  // Inicjalizacja bufora ramki:
+    glutInitDisplayMode (GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH);
+
+  // Rozmiary głównego okna programu:
+    glutInitWindowSize (400,400);
+
+  // Utworzenie głównego okna programu:
+    glutCreateWindow ("Teksturowanie");
+
+  // Inicjalizacja biblioteki GLEW:
+    glewInit();
+
+  // Sprawdzenie wsparcia OpenGL 2.0:
+    if (!glewIsSupported("GL_VERSION_2_0"))
+    {
+        puts("OpenGL 2.0 nie jest wspierany\n");
+        exit(1);
+    }
+
+  // Rejestracja funkcji zmiany okna
+	glutReshapeFunc(reshape);
+
+  // Rejestracja funkcji renderującej scenę
+	glutDisplayFunc(display);
+
+  // Rejestracja funkcji obsługującej klawiaturę
+	glutKeyboardFunc(normalKeys);
+
+  // Konfiguracja shaderów:
+	setupShaders("teksturowanie_osw.vert", "teksturowanie_osw.frag");
+    
+    // Konfiguracja Tekstur:
+    setupTexture();
+  // Konfiguracja Sceny:
+    setupScene();
+
+  // Główna pętla programu:
+    glutMainLoop();
+
+  return 0;
+}
