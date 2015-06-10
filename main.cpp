@@ -7,24 +7,33 @@
 
 #include <GL/glew.h>
 #include <GL/glut.h>
-#include "Targa.cpp"
+//#include "Targa.cpp"
 #include "colors.h"
 #include "Solar.h"
 
-GLuint shaderVert, shaderFrag;	
-GLuint shaderProg;	
+//#pragma comment(lib, "glew32.lib")
+
+GLuint shaderVert, shaderFrag;	// Shadery
+GLuint shaderProg;	// Program
 
 enum
 {
-               
-    UKLAD,               
-    EXIT                 
+    /* menu              */
+    UKLAD,               // uklad
+    EXIT                 // wyjscie
 };
 
-// Light
+typedef struct {
+	GLuint bpp;		// iloœæ bitów na piksel
+	GLuint width;	// rozmiary w pikselach
+	GLuint height;
+} TARGAINFO;
+
+
+// Pozycja swiatla
 GLfloat mat_specular[] = { 1.0, 1.0, 1.0, 1.0 };
 GLfloat mat_shininess[] = { 50.0 };
-GLfloat light_position[] = { 0.0, 0.0, 1.0, 1.0 }; 
+GLfloat light_position[] = { 0.0, 0.0, 1.0, 1.0 }; //ostatnia wartosc 1 - wektor pada z z,y,z
 GLfloat ambient_light[] = {0.2, 0.2, 0.2, 1.0};
 
 GLfloat mat_em[] = { 1.0, 0.9, 0.9, 0.0 };
@@ -34,10 +43,10 @@ GLint loc;
 static GLenum spinMode = GL_TRUE;
 static GLenum singleStep = GL_FALSE;
 
-// Animation
+// Zmienne do animacji
 static float HourOfDay = 0.0;
 static float DayOfYear = 0.0;
-static float AnimateIncrement = 24.0;  // time
+static float AnimateIncrement = 24.0;  // Jednostka czasu
 
 float a = 0;
 
@@ -63,45 +72,163 @@ float rotatez = 0.0;
 float angle = 15.0;
 float zoom = -30.0;
 
+// obiekty tekstur
 GLuint textures[10];
 
-// Loading shader
+
+
+///////////////////////////////////////////////////////////////////////////////
+// Procedura ładuje plik o podanej nazwie
+// wypełnia podaną strukturę TARGAINFO
+// oraz zwraca adres bufora z pikselami (jeśli nie było błędu)
+// Jeśli był błąd - zwraca NULL
+GLubyte *LoadTGAImage(char *filename, TARGAINFO *info)
+{
+	GLubyte	TGAHeader[12] = { 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0 };	// Nagłówek TGA bez kompresji
+	GLubyte	TGACompare[12];			// Tu się załaduje dane z pliku
+	GLubyte	Header[6];			// Pierwsze potrzebne 6 bajtów z pliku
+	GLubyte *Bits = NULL;	// Wskaźnik na bufor z danymi pikseli
+
+	FILE *plik = fopen(filename, "rb");	// Próba otwarcia do odczytu
+	if (plik)
+	{
+		fread(TGACompare, 1, sizeof(TGACompare), plik);	// Odczytanie nagłówka pliku
+		if (memcmp(TGAHeader, TGACompare, sizeof(TGAHeader)) == 0)	// Nagłówek identyczny?
+		{
+			fread(Header, 1, sizeof(Header), plik);	// Odczyt użytecznych danych
+
+			// Wyłuskanie informacji o rozmiarach
+			info->width = Header[1] * 256 + Header[0];
+			info->height = Header[3] * 256 + Header[2];
+			info->bpp = Header[4];
+
+			// Sprawdzenie czy rozmiary > 0 oraz czy bitmapa 24 lub 32-bitowa
+			if (info->width>0 && info->height>0 && (info->bpp == 24 || info->bpp == 32))
+			{
+				long ImageSize = info->height * info->width * info->bpp / 8;	// Obliczenie ilości danych
+				Bits = (GLubyte*)malloc(ImageSize);	// Alokacja pamięci na dane
+
+				if (Bits)
+				{
+					fread(Bits, 1, ImageSize, plik);	// Odczyt właściwych danych pikseli z pliku
+
+					// Konwersja BGR -> RGB
+					int i;
+					GLubyte tmp;	// Miejsce przechowania jednej wartości koloru
+
+					for (i = 0; i < ImageSize; i += info->bpp / 8)	// Wszystkie wartości RGB lub RGBA
+					{
+						tmp = Bits[i];
+						Bits[i] = Bits[i + 2];
+						Bits[i + 2] = tmp;
+					}
+				}
+			}
+		}
+
+		fclose(plik);
+	}
+
+	return(Bits);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Procedury na podstawie przekazanych danych ładują
+// i tworzą teksturę lub teksturę z Mip-Map'ami
+bool LoadTGATexture(char *filename)
+{
+	TARGAINFO info;	// Dane o bitmapie
+	GLubyte *bits;	// Dane o pikselach
+
+	// ładowanie pliku
+	bits = LoadTGAImage(filename, &info);	// Próba wczytania tekstury
+	if (bits == NULL)	return(false);	// ERROR
+
+	// Ustawienie parametrów tekstury
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+	glTexEnvi(GL_TEXTURE_2D, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+
+	if (info.bpp == 24)	// Bitmapa z danymi RGB
+		glTexImage2D(GL_TEXTURE_2D, 0, 3, info.width, info.height, 0, GL_RGB, GL_UNSIGNED_BYTE, bits);
+	else	// Bitmapa z danymi RGBA
+		glTexImage2D(GL_TEXTURE_2D, 0, 4, info.width, info.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, bits);
+
+	free(bits);
+	return(true);
+}
+
+bool LoadTGAMipmap(char *filename)
+{
+	TARGAINFO info;	// Dane o bitmapie
+	GLubyte *bits;	// Dane o pikselach
+
+	// ładowanie pliku
+	bits = LoadTGAImage(filename, &info);	// Próba wczytania tekstury
+	if (bits == NULL)	return(false);	// ERROR
+
+	// Ustawienie parametrów tekstury
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+
+	if (info.bpp == 24)	// Bitmapa z danymi RGB
+		gluBuild2DMipmaps(GL_TEXTURE_2D, 3, info.width, info.height, GL_RGB, GL_UNSIGNED_BYTE, bits);
+	else	// Bitmapa z danymi RGBA
+		gluBuild2DMipmaps(GL_TEXTURE_2D, 4, info.width, info.height, GL_RGBA, GL_UNSIGNED_BYTE, bits);
+
+	free(bits);
+	return(true);
+}
+
+
+
+// Wczytanie kodu zrodlowego shadera z pliku
 char *loadTextFile(const char *fileName) {
-	
+	// Otwarcie pliku:
 	FILE *plik = fopen(fileName, "rb");
 	if(!plik)	return(NULL);
 
-	// size file
+	// Zbadanie rozmiaru pliku:
 	unsigned long fSize;
 	fseek(plik, 0, SEEK_END);
 	fSize = ftell(plik);
 	fseek(plik, 0, SEEK_SET);
 
-	// open bufor
+	// Utworzenie bufora:
 	char *buff = (char*)malloc(fSize + 1);
 	if(!buff)	return(NULL);
 
-	// read data
+	// Odczyt danych:
 	fread(buff, 1, fSize, plik);
-	buff[fSize] = 0;	
+	buff[fSize] = 0;	// Terminator
 
-	// close file
+	// Zamknięcie pliku:
 	fclose(plik);
 	return(buff);
 }
 
+// Sprawdzenie błędów
 void checkErrors(GLuint object) {
 	int res, logLen;
 	char *buff;
 
-	// check Shader
+	// Sprawdzenie SHADERA:
 	glGetShaderiv(object, GL_COMPILE_STATUS, &res);
-	if(res == GL_FALSE) {	
+	if(res == GL_FALSE) {	// Sprawdzenie InfoLog
 		puts("GL_COMPILE_STATUS ERROR!");
 
-		// log size
+		// Pobranie długości loga:
 		glGetShaderiv(object, GL_INFO_LOG_LENGTH,&logLen);
-		// Allocate memory for message
+		// Przydzielenie pamięci na wiadomość:
 		buff = (char *)malloc(logLen);
 
 		glGetShaderInfoLog(object, logLen , NULL, buff);
@@ -111,14 +238,14 @@ void checkErrors(GLuint object) {
 		exit(0);
 	}
 
-	
+	// Sprawdzenie PROGRAMU:
 	glGetProgramiv(object, GL_LINK_STATUS, &res);
 	if(res == GL_FALSE) {
 		puts("GL_LINK_STATUS ERROR!");
 
-		// log size
+		// Pobranie długości loga:
 		glGetProgramiv(object, GL_INFO_LOG_LENGTH,&logLen);
-		// Allocate memory for message
+		// Przydzielenie pamięci na wiadomość:
 		buff = (char *)malloc(logLen);
 
 		glGetProgramInfoLog(object, logLen, NULL, buff);
@@ -129,87 +256,87 @@ void checkErrors(GLuint object) {
 	}
 }
 
-// config shader
+// Konfiguracja shaderów
 void setupShaders(char *fileVert, char *fileFrag) {
 	char *strVert, *strFrag;
 
-	// crate shaderów:
+	// Utworzenie shaderów:
 	shaderVert = glCreateShader(GL_VERTEX_SHADER);
 	shaderFrag = glCreateShader(GL_FRAGMENT_SHADER);
 
-	// read shader from file
+	// Odczyt kodu shaderów z pliku:
 	strVert = loadTextFile( fileVert );
 	if(!strVert) {
-		puts("** Error loading file *.vert");
+		puts("** Błąd ładowania pliku *.vert");
 		exit(0);
 	}
 	strFrag = loadTextFile( fileFrag );
 	if(!strFrag) {
-		puts("** Error loading file *.frag");
+		puts("** Błąd ładowania pliku *.frag");
 		exit(0);
 	}
-	// Load shader source code:
+	// Wczytanie kodu źródłowego shadera:
 	glShaderSource(shaderVert, 1, (const GLchar**)(&strVert), NULL);
 	glShaderSource(shaderFrag, 1, (const GLchar**)(&strFrag), NULL);
 
-	// free mem
+	// Zwolnienie pamięci
 	free(strVert);free(strFrag);
 
-	// Compiling Shader
+	// Kompilacja shaderów:
 	glCompileShader(shaderVert);
 	glCompileShader(shaderFrag);
 
-	// create program
+	// Utworzenie programu:
 	shaderProg = glCreateProgram();
 
-	// Joining shaders to program:
+	// Dołączenie shaderów do programu:
 	glAttachShader(shaderProg, shaderVert);
 	glAttachShader(shaderProg, shaderFrag);
 
-	// Linking and activation:
+	// Linkowanie i aktywacja:
 	glLinkProgram(shaderProg);
 	glUseProgram(shaderProg);
 
-    // Check for errors:
+    // Sprawdzenie błędów:
 	checkErrors(shaderVert);
 	checkErrors(shaderFrag);
 
-	// Setting textures for shader:
+	// Ustawienie tekstur dla shadera:
 	loc = glGetUniformLocation(shaderProg, "tex0");
 	glUniform1i(loc, 0);
 	loc = glGetUniformLocation(shaderProg, "tex1");
 	glUniform1i(loc, 1);
 }
 
-// Configuration of textures
+// Funkcja konfiguracji tekstur
 void setupTexture(){
 
-    // Generating textures of objects:
+    // Wygenerowanie obiektów tekstur:
    glGenTextures(10, textures);
 
-    // Load data into one object texture:
+    // Wczytanie danych do 1 obiektu tekstury:
     glBindTexture(GL_TEXTURE_2D, textures[0]);
     if (!LoadTGATexture("tex0.tga"))
     {
-        puts("error while loading textures");
+        puts("blad podczas wczytywania tekstury");
         exit(1);
     }
 
     glBindTexture(GL_TEXTURE_2D, textures[1]);
     if (!LoadTGATexture("tex1.tga"))
     {
-        puts("error while loading textures");
+        puts("blad podczas wczytywania tekstury");
         exit(1);
     }
     glBindTexture(GL_TEXTURE_2D, textures[2]);
     if (!LoadTGATexture("earth.tga"))
     {
-        puts("error while loading textures");
+        puts("blad podczas wczytywania tekstury");
         exit(1);
     }
     if (!LoadTGAMipmap("earth.tga"))
     {
-        puts("error while loading textures");
+        puts("blad podczas wczytywania tekstury");
         exit(1);
     }
     glBindTexture(GL_TEXTURE_2D, textures[3]);
@@ -228,6 +355,7 @@ void setupTexture(){
     LoadTGATexture("neptune.tga");
 }
 
+//rysuj elipse z punktow
 void DrawEllipse(float sinus, float cosinus)
 {
     glColor3f(1,1,1);
@@ -238,17 +366,17 @@ void DrawEllipse(float sinus, float cosinus)
     glBegin(GL_POINTS);
         for(t = 0; t <= 360; t +=1)
         {
-            x = s*sin(t);
+            x = s*sin((double)t);
             y = 0;
-            z = c*cos(t);
+            z = c*cos((double)t);
             glVertex3f(x,y,z);
         }
     glEnd();
 }
 
-// Planet
+// Planety
 void sun(){
-    GLUquadricObj *slonce;//creating quadrics
+    GLUquadricObj *slonce;//tworzenie kwadryki
     slonce = gluNewQuadric();
 
     gluQuadricDrawStyle(slonce, styl);
@@ -256,140 +384,54 @@ void sun(){
     gluQuadricNormals(slonce, wektor);
     gluQuadricTexture(slonce, tekstura);
 
-    // Define rotation angle:
+    // Zdefiniowanie obrotu o kąt a:
 	glRotatef(a,sun_pos[0],sun_pos[1],sun_pos[2]);
 	//glRotatef( 360.0*DayOfYear/365.0, sun_pos[0], sun_pos[1], sun_pos[2]);
 	//glVertexAttrib1f(loc,0.0);
 
-	// Set color of object:
+	// Ustawienie koloru obiektu:
 	glColor4f(1.000000, 0.843137, 0.000000, 1.000000);
 
-    // Setting the active textures and combining them with objects textures:
+    // Ustawienie aktywnych tekstur i połączenie ich z obiektami tekstur:
 	glActiveTexture(GL_TEXTURE1);	glBindTexture(GL_TEXTURE_2D, textures[1]);
 	glActiveTexture(GL_TEXTURE0);	glBindTexture(GL_TEXTURE_2D, textures[0]);
 
-    // Drawing a 3D object:
+    // Narysowanie obiektu 3D:
 	gluSphere(slonce, 5.0, 30, 30 );
 
 }
 
+
+
 void moon(){
-   	glRotatef( 360.0*12.0*DayOfYear/365.0, 0.0, 1.0, 0.0 );
-    glTranslatef( 0.7, 0.0, 0.0 );
-    glColor3f( 0.3, 0.7, 0.3 );
-    glutSolidSphere( 0.1, 5, 5 );
+	glRotatef(360.0*12.0*DayOfYear / 365.0, 0.0, 1.0, 0.0);
+	glTranslatef(0.7, 0.0, 0.0);
+	glColor3f(0.3, 0.7, 0.3);
+	glutSolidSphere(0.1, 5, 5);
 }
 
-void earth(){
-    glRotatef( 360.0*DayOfYear/365.0, 0.0, 1.0, 0.0 );
-    glPushMatrix();
-    glTranslatef( distanceEarth, 0.0, 0.0 );
+void drawPlanet(float distance, float size, GLuint texture){
+	glRotatef(360.0*DayOfYear / 365.0, 0.0, 1.0, 0.0);
+	glPushMatrix();
+	glTranslatef(distance, 0.0, 0.0);
+	glColor3f(0.2, 0.2, 1.0);
 
-    glBindTexture(GL_TEXTURE_2D, textures[2]);
-	glRotatef( 360.0*HourOfDay/24.0, 0.0, 1.0, 0.0 );
+	GLUquadricObj *planet;
+	planet = gluNewQuadric();
 
-    glColor3f( 0.2, 0.2, 1.0 );
-    glutSolidSphere( sizeEarth, 30, 30);
-    moon();
-    glPopMatrix();
+	gluQuadricDrawStyle(planet, styl);
+	gluQuadricOrientation(planet, orientacja);
+	gluQuadricNormals(planet, wektor);
+	gluQuadricTexture(planet, tekstura);
+
+	if (texture != NULL){ glBindTexture(GL_TEXTURE_2D, texture); }
+
+	gluSphere(planet, size, 30, 30);
+	if (distance == distanceEarth){ moon(); }
+	glPopMatrix();
 }
 
-void mercury(){
-    glRotatef( 360.0*DayOfYear/365.0, 0.0, 1.0, 0.0 );
-    glPushMatrix();
-    glTranslatef( distanceMercury, 0.0, 0.0 );
-
-    glBindTexture(GL_TEXTURE_2D, textures[4]);
-	glRotatef( 360.0*HourOfDay/24.0, 0.0, 1.0, 0.0 );
-
-    glColor3f( 0.2, 0.2, 1.0 );
-    glutSolidSphere( sizeMercury, 30, 30);
-    glPopMatrix();
-}
-
-void venus(){
-    glRotatef( 360.0*DayOfYear/365.0, 0.0, 1.0, 0.0 );
-    glPushMatrix();
-    glTranslatef( distanceVenus, 0.0, 0.0 );
-
-    glBindTexture(GL_TEXTURE_2D, textures[4]);
-	glRotatef( 360.0*HourOfDay/24.0, 0.0, 1.0, 0.0 );
-
-    glColor3f( 0.0, 0.0, 1.0 );
-    glutSolidSphere( sizeVenus, 30, 30);
-    glPopMatrix();
-}
-
-void mars(){
-    glRotatef( 360.0*DayOfYear/365.0, 0.0, 1.0, 0.0 );
-    glPushMatrix();
-    glTranslatef( distanceMars, 0.0, 0.0 );
-
-    glBindTexture(GL_TEXTURE_2D, textures[5]);
-	glRotatef( 360.0*HourOfDay/24.0, 0.0, 1.0, 0.0 );
-
-    glColor3f( 1.0, 0.0, 0.0 );
-    glutSolidSphere( sizeMars, 30, 30);
-    glPopMatrix();
-}
-
-void jupiter(){
-    glRotatef( 360.0*DayOfYear/365.0, 0.0, 1.0, 0.0 );
-
-    glPushMatrix();
-    glTranslatef( distanceJupiter, 0.0, 0.0 );
-
-    glBindTexture(GL_TEXTURE_2D, textures[6]);
-	glRotatef( 360.0*HourOfDay/24.0, 0.0, 1.0, 0.0 );
-
-    glColor3f( 0.2, 0.2, 1.0 );
-    glutSolidSphere( sizeJupiter, 30, 30);
-    glPopMatrix();
-}
-
-void saturn(){
-    glRotatef( 360.0*DayOfYear/365.0, 0.0, 1.0, 0.0 );
-    glPushMatrix();
-    glTranslatef( distanceSaturn, 0.0, 0.0 );
-
-    glBindTexture(GL_TEXTURE_2D, textures[7]);
-	glRotatef( 360.0*HourOfDay/24.0, 0.0, 1.0, 0.0 );
-    glColor3f( 0.2, 0.2, 1.0 );
-    glutSolidSphere( sizeSaturn, 30, 30);
-    glColor3f(0.5, 0.0, 0.5);
-    for(float a = 5.0; a <= 7.0; a=a+0.2){
-        DrawEllipse(a,a+0.2);
-    }
-    glPopMatrix();
-}
-
-void uranus(){
-    glRotatef( 360.0*DayOfYear/365.0, 0.0, 1.0, 0.0 );
-    glPushMatrix();
-    glTranslatef( distanceUranus, 0.0, 0.0 );
-
-    glBindTexture(GL_TEXTURE_2D, textures[8]);
-	glRotatef( 360.0*HourOfDay/24.0, 0.0, 1.0, 0.0 );
-
-    glColor3f( 0.2, 0.2, 1.0 );
-    glutSolidSphere( sizeUranus, 30, 30);
-    glPopMatrix();
-}
-
-void neptune(){
-    glRotatef( 360.0*DayOfYear/365.0, 0.0, 1.0, 0.0 );
-    glPushMatrix();
-
-    glTranslatef( distanceNeptune, 0.0, 0.0 );
-
-    glBindTexture(GL_TEXTURE_2D, textures[9]);
-	glRotatef( 360.0*HourOfDay/24.0, 0.0, 1.0, 0.0 );
-
-    glColor3f( 0.2, 0.2, 1.0 );
-    glutSolidSphere( sizeNeptune, 30, 30);
-    glPopMatrix();
-}
-
+// Funkcja konfiguracji sceny
 void setupScene(){
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_TEXTURE_2D);
@@ -398,21 +440,21 @@ void setupScene(){
     glClearColor( 0.0, 0.0, 0.0, 0.0 );
     glClearDepth( 1.0 );
 
-    // Setting the properties of the material:
+    // Ustawienie właściwości materiału:
    // glMaterialfv(GL_FRONT, GL_SPECULAR, mat_specular);
    // glMaterialfv(GL_FRONT, GL_SHININESS, mat_shininess);
     glMaterialfv(GL_FRONT, GL_EMISSION, mat_em);
 
-    // Usatwienie lighting parameters:
+    // Usatwienie parametrów oświetlenia:
     glLightfv(GL_LIGHT0, GL_POSITION, light_position);
     glLightfv(GL_LIGHT1, GL_AMBIENT, ambient_light);
 
-    // Illumination:
+    // Włączenie oświetlenia:
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
     glEnable(GL_LIGHT1);
 
-	// Texturing:
+	// Włączenie teksturowania :
 	glActiveTexture(GL_TEXTURE0); glEnable(GL_TEXTURE_2D);
 	glActiveTexture(GL_TEXTURE1); glEnable(GL_TEXTURE_2D);
     glActiveTexture(GL_TEXTURE2); glEnable(GL_TEXTURE_2D);
@@ -424,9 +466,10 @@ void setupScene(){
 	glActiveTexture(GL_TEXTURE9); glEnable(GL_TEXTURE_2D);
 }
 
+// Funkcja renderująca scenę
 void display ()
 {
-    // Delete the contents of the color and depth buffers:
+    // Usunięcie zawartości buforów koloru i głębi:
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     if (spinMode) {
@@ -439,12 +482,12 @@ void display ()
 		}
 
 
-    // Setting matrix modeling:
+    // Ustawienie macierzy modelowania:
     glMatrixMode(GL_MODELVIEW);
-    // Load the identity matrix:
+    // Wczytanie macierzy jednostkowej:
 	glLoadIdentity();
 
-	// Setting the camera:
+	// Ustawienie kamery:
 
 	/*
 	gluLookAt(0.0,0.0,10.0,
@@ -454,22 +497,25 @@ void display ()
 
 
 
-	// Withdrawal of a few individuals to many for a better view
+	// Wycofanie o kilka jednostek do tylu dla lepszego widoku
     glTranslatef ( 0.0, 0.0, zoom );
 
 	glRotatef( angle, rotatex, rotatey, rotatez );
-
+  //   slonce();
+	
     sun();
-    mercury();
-    venus();
-    earth();
-   // moon();
-    mars();
-    jupiter();
-    saturn();
-    uranus();
-    neptune();
-    //elliptical orbit, resembling asteroids
+	drawPlanet(distanceMercury, sizeMercury, textures[3]);
+	drawPlanet(distanceVenus, sizeVenus, textures[4]);
+	drawPlanet(distanceEarth, sizeEarth, textures[2]);
+	drawPlanet(distanceMars, sizeMars, textures[5]);
+	drawPlanet(distanceJupiter, sizeJupiter, textures[6]);
+	drawPlanet(distanceSaturn, sizeSaturn, textures[7]);
+	drawPlanet(distanceUranus, sizeUranus, textures[8]);
+	drawPlanet(distanceNeptune, sizeNeptune, textures[9]);
+
+
+	//elipsy, orbity, przypominajace asteroidy
+    //pas 1
     for(float a = 34.0; a <= 85.0; a=a+5.0){
         DrawEllipse(a,a);
     }
@@ -484,32 +530,33 @@ void display ()
 	glutPostRedisplay();
 
 /*
-    // Cyclic scene rendering function call:
+    // Cykliczne wywołanie funkcji renderującej scenę:
 	glutPostRedisplay();
 
-    // Calling swap buffers:
+    // Wywołanie zamiany buforów:
 	glutSwapBuffers();
 */
 }
 
+// Funckja zmiany wielkości okna
 static void reshape (int w,int h)
 {
 	float ratio = 1.0* w / h;
 
-	// Setting the projection matrix:
+	// Ustawienie macierzy rzutowania:
 	glMatrixMode(GL_PROJECTION);
-	// Load the identity matrix:
+	// Wczytanie macierzy jednostkowej:
 	glLoadIdentity();
 
-	// Sets the view model for whole-window:
+	// Ustawienie widoku modelu dla całęgo okna:
     glViewport(0, 0, w, h);
 
-	// Set the correct perspective
+	// Ustawienie poprawnej perspektywy
 	gluPerspective(45,ratio,1,1000);
 
 	display();
 }
-// The keyboard supports
+// Funkcja bosługująca klawiaturę
 static void normalKeys(unsigned char Key, int x, int y) {
   switch ( Key ) {
 	case 'R':
@@ -531,11 +578,11 @@ static void normalKeys(unsigned char Key, int x, int y) {
 		exit(1);
 	}
 
-    // draw the scene
+    // narysowanie sceny
     reshape (glutGet (GLUT_WINDOW_WIDTH),glutGet (GLUT_WINDOW_HEIGHT));
 }
 
-// specific keys
+// Konkretne klawisze
 static void Key_r(void)
 {
 	if ( singleStep ) {			// If ending single step mode
@@ -564,7 +611,7 @@ static void Key_down(void)
 
 }
 
-// Special Characters
+// Znaki specjalne
 static void SpecialKeyFunc( int Key, int x, int y )
 {
 	switch ( Key ) {
@@ -584,50 +631,53 @@ static void SpecialKeyFunc( int Key, int x, int y )
 int main(int argc, char *argv[])
 {
 
-  // Initialize GLUT:
+  // Inicjalizacja biblioteki GLUT:
     glutInit (&argc,argv);
 
-  // Initialize the frame buffer:
+  // Inicjalizacja bufora ramki:
     glutInitDisplayMode (GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH);
 
-  // Size of the main window:
+  // Rozmiary głównego okna programu:
     glutInitWindowSize (WIDTH,HEIGHT);
 
-  // The creation of the main window:
-    glutCreateWindow ("Solar system v0.1");
+  // Utworzenie głównego okna programu:
+    glutCreateWindow ("Uklad sloneczny v0.2");
 
-  // GLEW library initialization:
+  // Inicjalizacja biblioteki GLEW:
     glewInit();
 
-  // Checking support OpenGL 2.0:
+  // Sprawdzenie wsparcia OpenGL 2.0:
     if (!glewIsSupported("GL_VERSION_2_0"))
     {
-        puts("OpenGL 2.0 is not supported\n");
+        puts("OpenGL 2.0 nie jest wspierany\n");
         exit(1);
     }
 
-  // Since the function changes the window
+  // Rejestracja funkcji zmiany okna
 	glutReshapeFunc(reshape);
 
-  // Since scene rendering function
+  // Rejestracja funkcji renderującej scenę
 	glutDisplayFunc(display);
 
-  // Since the keyboard handler
+  // Rejestracja funkcji obsługującej klawiaturę
 	glutKeyboardFunc(normalKeys);
 
-  // Special Characters
+  // Znaki specjalne
 	glutSpecialFunc( SpecialKeyFunc );
 
-  // Configuration Shader
+  // Konfiguracja shaderów:
 	setupShaders("teksturowanie_osw.vert", "teksturowanie_osw.frag");
 
-  // Configuration Texture:
+  // Konfiguracja Tekstur:
     setupTexture();
-  // Configuring Scenes
+  // Konfiguracja Sceny:
     setupScene();
 
-  // The main loop of the program:
+  // Główna pętla programu:
     glutMainLoop();
 
   return 0;
 }
+
+
+

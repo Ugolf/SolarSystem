@@ -40,7 +40,6 @@ static void normalKeys(unsigned char Key, int x, int y);
 static void SpecialKeyFunc( int Key, int x, int y );
 static void reshape(int w,int h);
 
-void DrawEllipse(float sinus, float cosinus);
 void checkErrors(GLuint object);
 void setupShaders(char *fileVert, char *fileFrag);
-void setupTexture();
+void drawPlanet(float distance, float size, GLuint texture);
